@@ -151,9 +151,27 @@ export default async function handler(req, res) {
 
     if (!shopifyRes.ok) {
       console.error("Shopify API error:", data);
+
+      // Handle "customer.phone_number has already been taken"
+      if (
+        data &&
+        data.errors &&
+        data.errors["customer.phone_number"] &&
+        Array.isArray(data.errors["customer.phone_number"]) &&
+        data.errors["customer.phone_number"].includes("has already been taken")
+      ) {
+        return res.status(409).json({
+          success: false,
+          error: "Customer phone already exists",
+          code: "CUSTOMER_PHONE_TAKEN",
+          details: data.errors,
+        });
+      }
+
+      // Default error
       return res.status(400).json({
         success: false,
-        error: "Shopify error",
+        error: "Shopify API error",
         details: data.errors || data,
       });
     }
