@@ -41,7 +41,8 @@ export default async function handler(req, res) {
     if (req.method !== "POST") {
       return res.status(405).json({
         success: false,
-        error: "Method not allowed",
+        error: "METHOD_NOT_ALLOWED",
+        message: "Method not allowed",
       });
     }
 
@@ -50,8 +51,8 @@ export default async function handler(req, res) {
     if (isRateLimited(ip)) {
       return res.status(429).json({
         success: false,
-        error: "Rate limit exceeded",
-        details:
+        error: "RATE_LIMIT_EXCEEDED",
+        message:
           "You can only place a COD order once every 5 minutes from this IP.",
       });
     }
@@ -62,14 +63,16 @@ export default async function handler(req, res) {
     if (!shop || !signature) {
       return res.status(403).json({
         success: false,
-        error: "Forbidden - Invalid app proxy request",
+        error: "INVALID_APP_PROXY",
+        message: "Forbidden - Invalid app proxy request",
       });
     }
 
     if (!shop.endsWith(".myshopify.com")) {
       return res.status(403).json({
         success: false,
-        error: "Forbidden - Invalid shop domain",
+        error: "INVALID_SHOP_DOMAIN",
+        message: "Forbidden - Invalid shop domain",
       });
     }
 
@@ -81,25 +84,114 @@ export default async function handler(req, res) {
       } catch (e) {
         return res.status(400).json({
           success: false,
-          error: "Invalid JSON in request body",
+          error: "BAD_REQUEST",
+          message: "Invalid JSON in request body",
         });
       }
     }
 
-    const { name, phone, address, variantId, quantity } = body || {};
+    const { name, phone, address, city, variantId, quantity } = body || {};
 
-    if (!name || !phone || !address || !variantId || !quantity) {
+    if (!name || !phone || !address || !variantId || !city || !quantity) {
       return res.status(400).json({
         success: false,
-        error: "Missing required fields",
+        error: "MISSING_FIELDS",
+        message: "Missing required fields",
       });
     }
-    const ENV_SHOP_NAME = process.env.SHOP_NAME;
+
+    const ENV_SHOP_NAME = process.env.SHOP_NAME; // e.g. "fxykrg-k1.myshopify.com"
     const ENV_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-    // Call Shopify Admin REST API to create the order
+    if (!ENV_SHOP_NAME || !ENV_ACCESS_TOKEN) {
+      return res.status(500).json({
+        success: false,
+        error: "SERVER_MISCONFIGURED",
+        message: "SHOP_NAME or SHOPIFY_ACCESS_TOKEN env vars are missing",
+      });
+    }
+
+    // --------- GraphQL orderCreate mutation ---------
+    const mutation = `
+      mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+        orderCreate(order: $order, options: $options) {
+          userErrors {
+            field
+            message
+          }
+          order {
+            id
+            displayFinancialStatus
+            shippingAddress {
+              name
+              phone
+              address1
+              city
+              provinceCode
+              countryCode
+              zip
+            }
+            billingAddress {
+              name
+              phone
+              address1
+              city
+              provinceCode
+              countryCode
+              zip
+            }
+            customer {
+              email
+              firstName
+              lastName
+              phone
+            }
+          }
+        }
+      }
+    `;
+
+    const firstName = name; // full name into firstName (lastName omitted)
+    const variantGid = `gid://shopify/ProductVariant/${variantId}`;
+    const orderInput = {
+      lineItems: [
+        {
+          variantId: variantGid, // GID string
+          quantity: Number(quantity),
+        },
+      ],
+      customer: {
+        toUpsert: {
+          firstName,
+          phone,
+        },
+      },
+      shippingAddress: {
+        firstName,
+        phone,
+        address1: address,
+        city,
+      },
+      billingAddress: {
+        firstName,
+        phone,
+        address1: address,
+        city,
+      },
+      note: "PendingDing😁",
+      financialStatus: "PENDING",
+    };
+
+    const graphQLBody = {
+      query: mutation,
+      variables: {
+        order: orderInput,
+        options: null,
+      },
+    };
+
     const shopifyRes = await fetch(
-      `https://${ENV_SHOP_NAME}/admin/api/2024-01/orders.json`,
+      `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
       {
         method: "POST",
         headers: {
@@ -107,30 +199,7 @@ export default async function handler(req, res) {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({
-          order: {
-            line_items: [
-              {
-                variant_id: Number(variantId),
-                quantity: Number(quantity),
-              },
-            ],
-            customer: {
-              first_name: name,
-              phone: phone,
-            },
-            billing_address: {
-              address1: address,
-              phone: phone,
-            },
-            shipping_address: {
-              address1: address,
-              phone: phone,
-            },
-            financial_status: "pending",
-            gateway: "Cash on Delivery",
-          },
-        }),
+        body: JSON.stringify(graphQLBody),
       },
     );
 
@@ -139,54 +208,107 @@ export default async function handler(req, res) {
 
     if (contentType && contentType.includes("application/json")) {
       data = await shopifyRes.json();
+      console.log("Shopify GraphQL response:", JSON.stringify(data, null, 2));
     } else {
       const text = await shopifyRes.text();
       console.error("Non-JSON response from Shopify:", text);
       return res.status(502).json({
         success: false,
-        error: "Invalid response from Shopify",
-        details: "Received non-JSON response",
+        error: "SHOPIFY_INVALID_RESPONSE",
+        message: "Invalid response from Shopify (non-JSON)",
+        details: text,
       });
     }
 
+    // 1) HTTP-level errors (rare for valid GraphQL)
     if (!shopifyRes.ok) {
-      console.error("Shopify API error:", data);
+      console.error("Shopify GraphQL HTTP error:", data);
+      return res.status(shopifyRes.status || 400).json({
+        success: false,
+        error: "SHOPIFY_HTTP_ERROR",
+        message: "Non-200 HTTP from Shopify GraphQL",
+        details: data,
+      });
+    }
 
-      // Handle "customer.phone_number has already been taken"
-      if (
-        data &&
-        data.errors &&
-        data.errors["customer.phone_number"] &&
-        Array.isArray(data.errors["customer.phone_number"]) &&
-        data.errors["customer.phone_number"].includes("has already been taken")
-      ) {
-        return res.status(409).json({
-          success: false,
-          error: "Customer phone already exists",
-          code: "CUSTOMER_PHONE_TAKEN",
-          details: data.errors,
-        });
+    // 2) Top-level GraphQL errors
+    if (data.errors && data.errors.length > 0) {
+      console.error("Shopify GraphQL errors:", data.errors);
+
+      // Try to pull out the first error code if available
+      const firstError = data.errors[0];
+      const code = firstError?.extensions?.code || "GRAPHQL_ERROR";
+
+      // Map some common Shopify GraphQL codes to HTTP statuses
+      let status = 400;
+      if (code === "THROTTLED" || code === "MAX_COST_EXCEEDED") {
+        status = 429;
+      } else if (code === "ACCESS_DENIED") {
+        status = 403;
+      } else if (code === "INTERNAL_SERVER_ERROR") {
+        status = 502;
       }
 
-      // Default error
-      return res.status(400).json({
+      return res.status(status).json({
         success: false,
-        error: "Shopify API error",
-        details: data.errors || data,
+        error: code,
+        message: firstError.message,
+        details: data.errors,
       });
     }
 
+    // 3) Mutation-level userErrors (business / validation errors)
+    const orderCreateResult = data.data?.orderCreate;
+    if (!orderCreateResult) {
+      console.error("Missing orderCreate payload:", data);
+      return res.status(502).json({
+        success: false,
+        error: "MISSING_ORDER_CREATE",
+        message: "Invalid response from Shopify - no orderCreate field",
+        details: data,
+      });
+    }
+
+    const userErrors = orderCreateResult.userErrors || [];
+    if (userErrors.length > 0) {
+      console.error("Shopify orderCreate userErrors:", userErrors);
+
+      // Example: you can inspect specific messages and map them if you want.
+      // e.g. if phone duplicates, or invalid variant, etc.
+      return res.status(400).json({
+        success: false,
+        error: "ORDER_CREATE_VALIDATION_ERROR",
+        message: "Shopify rejected the order input",
+        details: userErrors,
+      });
+    }
+
+    // 4) Successful mutation: order present
+    const order = orderCreateResult.order;
+    if (!order) {
+      console.error("No order object returned:", orderCreateResult);
+      return res.status(502).json({
+        success: false,
+        error: "NO_ORDER_RETURNED",
+        message: "No order returned from Shopify",
+        details: orderCreateResult,
+      });
+    }
+
+    // Final success response to your frontend
     return res.status(200).json({
       success: true,
-      orderId: data.order?.id,
-      message: "Order placed successfully",
+      orderId: order.id,
+      financialStatus: order.displayFinancialStatus,
+      message: "Order placed successfully via GraphQL",
+      order,
     });
   } catch (err) {
     console.error("Server crash:", err);
 
     return res.status(500).json({
       success: false,
-      error: "Internal server error",
+      error: "INTERNAL_SERVER_ERROR",
       message: err.message,
     });
   }
