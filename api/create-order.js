@@ -151,8 +151,14 @@ export default async function handler(req, res) {
       }
     `;
 
-    const firstName = name; // full name into firstName (lastName omitted)
+    const firstName = name;
+    const lastName = String(phone);
     const variantGid = `gid://shopify/ProductVariant/${variantId}`;
+
+    const normalizedPhone = String(phone).replace(/\D/g, "") || "unknown";
+
+    const syntheticEmail = `cod-${normalizedPhone}@test.com`;
+
     const orderInput = {
       lineItems: [
         {
@@ -162,23 +168,32 @@ export default async function handler(req, res) {
       ],
       customer: {
         toUpsert: {
+          email: syntheticEmail,
           firstName,
+          lastName,
           phone,
         },
       },
       shippingAddress: {
         firstName,
+        lastName,
         phone,
         address1: address,
         city,
+        countryCode: "PK",
       },
+
+      // 👇 And billingAddress too
       billingAddress: {
         firstName,
+        lastName,
         phone,
         address1: address,
         city,
+        countryCode: "PK",
       },
-      note: "PendingDing😁",
+
+      tags: ["Pending", "SPEED-COD"],
       financialStatus: "PENDING",
     };
 
@@ -208,7 +223,6 @@ export default async function handler(req, res) {
 
     if (contentType && contentType.includes("application/json")) {
       data = await shopifyRes.json();
-      console.log("Shopify GraphQL response:", JSON.stringify(data, null, 2));
     } else {
       const text = await shopifyRes.text();
       console.error("Non-JSON response from Shopify:", text);
@@ -300,7 +314,7 @@ export default async function handler(req, res) {
       success: true,
       orderId: order.id,
       financialStatus: order.displayFinancialStatus,
-      message: "Order placed successfully via GraphQL",
+      message: "Order placed successfully. Thanks ❣",
       order,
     });
   } catch (err) {
