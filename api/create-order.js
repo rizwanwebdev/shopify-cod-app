@@ -152,7 +152,7 @@ export default async function handler(req, res) {
     `;
 
     const firstName = name;
-    const lastName = String(phone);
+    const lastName = "-";
     const variantGid = `gid://shopify/ProductVariant/${variantId}`;
 
     const normalizedPhone = String(phone).replace(/\D/g, "") || "unknown";
