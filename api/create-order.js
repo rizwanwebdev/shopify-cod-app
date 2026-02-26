@@ -90,7 +90,16 @@ export default async function handler(req, res) {
       }
     }
 
-    const { name, phone, address, city, variantId, quantity } = body || {};
+    const {
+      name,
+      phone,
+      address,
+      city,
+      variantId,
+      quantity,
+      dis_percent,
+      discount_code,
+    } = body || {};
 
     if (!name || !phone || !address || !variantId || !city || !quantity) {
       return res.status(400).json({
@@ -196,6 +205,15 @@ export default async function handler(req, res) {
       tags: ["Pending", "SPEED-COD"],
       financialStatus: "PENDING",
     };
+    // If customer buys 2 packs, apply your 10% discount code
+    if (quantity === 2) {
+      orderInput.discountCode = {
+        itemPercentageDiscountCode: {
+          percentage: Number(dis_percent),
+          code: String(discount_code), // must exist in Shopify discounts
+        },
+      };
+    }
 
     const graphQLBody = {
       query: mutation,
