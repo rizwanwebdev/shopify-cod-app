@@ -206,7 +206,7 @@ export default async function handler(req, res) {
       financialStatus: "PENDING",
     };
     // If customer buys 2 packs, apply your 10% discount code
-    if (quantity === 2) {
+    if (Number(quantity) === 2) {
       orderInput.discountCode = {
         itemPercentageDiscountCode: {
           percentage: Number(dis_percent),
