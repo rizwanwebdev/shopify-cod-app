@@ -258,7 +258,7 @@ export default async function handler(req, res) {
       return res.status(shopifyRes.status || 400).json({
         success: false,
         error: "SHOPIFY_HTTP_ERROR",
-        message: "Non-200 HTTP from Shopify GraphQL",
+        message: "Non-200 HTTP from Shopify GraphQL OR Invalid API",
         details: data,
       });
     }
