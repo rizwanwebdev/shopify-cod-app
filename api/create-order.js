@@ -57,23 +57,33 @@ export default async function handler(req, res) {
       });
     }
 
+    const ENV_SHOP_NAME = process.env.SHOP_NAME; // e.g. "fxykrg-k1.myshopify.com"
+    const ENV_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+
     // App proxy sends ?shop, ?timestamp, ?signature, etc.
     const { shop, signature, ...params } = req.query;
 
     if (!shop || !signature) {
       return res.status(403).json({
         success: false,
-        error: "INVALID_APP_PROXY",
+        error: "MISSING_PARAMETERS",
         message: "Forbidden - Invalid app proxy request",
       });
     }
-    console.log(shop);
 
     if (!shop.endsWith(".myshopify.com")) {
       return res.status(403).json({
         success: false,
         error: "INVALID_SHOP_DOMAIN",
         message: "Forbidden - Invalid shop domain",
+      });
+    }
+
+    if (shop !== ENV_SHOP_NAME) {
+      return res.status(403).json({
+        success: false,
+        error: "INVALID_SHOP",
+        message: "Forbidden - Shop mismatch",
       });
     }
 
@@ -109,9 +119,6 @@ export default async function handler(req, res) {
         message: "Missing required fields",
       });
     }
-
-    const ENV_SHOP_NAME = process.env.SHOP_NAME; // e.g. "fxykrg-k1.myshopify.com"
-    const ENV_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
     if (!ENV_SHOP_NAME || !ENV_ACCESS_TOKEN) {
       return res.status(500).json({
