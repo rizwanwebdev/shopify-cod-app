@@ -67,6 +67,7 @@ export default async function handler(req, res) {
         message: "Forbidden - Invalid app proxy request",
       });
     }
+    console.log(shop);
 
     if (!shop.endsWith(".myshopify.com")) {
       return res.status(403).json({
@@ -116,7 +117,7 @@ export default async function handler(req, res) {
       return res.status(500).json({
         success: false,
         error: "SERVER_MISCONFIGURED",
-        message: "SHOP_NAME or SHOPIFY_ACCESS_TOKEN env vars are missing",
+        message: "SHOP_NAME or SHOPIFY_ACCESS_TOKEN are missing",
       });
     }
 
@@ -205,7 +206,7 @@ export default async function handler(req, res) {
       tags: ["Pending", "SPEED-COD"],
       financialStatus: "PENDING",
     };
-    // If customer buys 2 packs, apply your 10% discount code
+    // If customer buys 2 packs, apply 10% discount code
     if (Number(quantity) === 2) {
       orderInput.discountCode = {
         itemPercentageDiscountCode: {
