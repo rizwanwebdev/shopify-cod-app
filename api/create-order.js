@@ -230,6 +230,7 @@ export default async function handler(req, res) {
     console.log("Shopify response data:", JSON.stringify(data, null, 2));
 
     if (data.errors) {
+      console.log(phone);
       return res.status(400).json({
         success: false,
         error: "GRAPHQL_ERROR",
