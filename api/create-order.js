@@ -182,6 +182,11 @@ export default async function handler(req, res) {
         city,
         countryCode: "PK",
       },
+      shippingLine: {
+        title: "Free Shipping", // exactly how it appears in Shopify
+        price: "0.00",
+        code: "Free Shipping",
+      },
       tags: ["Pending", "SPEED-COD"],
       financialStatus: "PENDING",
     };
