@@ -227,7 +227,7 @@ export default async function handler(req, res) {
     );
 
     const data = await shopifyRes.json();
-    console.log("response data= ", data);
+    console.log("Shopify response data:", JSON.stringify(data, null, 2));
 
     if (data.errors) {
       return res.status(400).json({
