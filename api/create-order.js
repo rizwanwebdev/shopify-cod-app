@@ -156,6 +156,7 @@ export default async function handler(req, res) {
         {
           variantId: variantGid,
           quantity: Number(quantity),
+          requiresShipping: true,
         },
       ],
       customer: {
