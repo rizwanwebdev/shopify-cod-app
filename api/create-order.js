@@ -90,11 +90,12 @@ export default async function handler(req, res) {
         }
       }
     `;
+    const syntheticEmail = `cod-${normalizedPhone}@test.com`;
 
     const searchQuery = `
-      phone:${normalizedPhone} 
-      created_at:>=${tenMinutesAgo}
-    `;
+        email:"${syntheticEmail}" 
+        created_at:>=${tenMinutesAgo}
+      `;
 
     const duplicateRes = await fetch(
       `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
@@ -149,8 +150,6 @@ export default async function handler(req, res) {
         }
       }
     `;
-
-    const syntheticEmail = `cod-${normalizedPhone}@test.com`;
 
     const orderInput = {
       lineItems: [
