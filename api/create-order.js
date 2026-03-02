@@ -60,6 +60,8 @@ export default async function handler(req, res) {
     const firstName = name;
     const lastName = "-";
     const variantGid = `gid://shopify/ProductVariant/${variantId}`;
+
+    // Normalize phone (you can switch to E.164 here if you want)
     const normalizedPhone = String(phone).replace(/\D/g, "");
 
     // ======================================================
@@ -90,6 +92,8 @@ export default async function handler(req, res) {
         }
       }
     `;
+
+    // You can keep using syntheticEmail purely for duplicate detection
     const syntheticEmail = `cod-${normalizedPhone}@test.com`;
 
     const searchQuery = `
@@ -133,6 +137,51 @@ export default async function handler(req, res) {
     }
 
     // ======================================================
+    // 🧍‍♂️ CUSTOMER LOOKUP BY PHONE
+    // ======================================================
+
+    const findCustomerByPhoneQuery = `
+      query FindCustomerByPhone($query: String!) {
+        customers(first: 1, query: $query) {
+          edges {
+            node {
+              id
+              defaultPhoneNumber {
+                phoneNumber
+              }
+              defaultEmailAddress {
+                emailAddress
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    // Shopify Admin search syntax: phone:"..."
+    const customerSearchQuery = `phone:"${normalizedPhone}"`;
+
+    const customerLookupRes = await fetch(
+      `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": ENV_ACCESS_TOKEN,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: findCustomerByPhoneQuery,
+          variables: { query: customerSearchQuery },
+        }),
+      },
+    );
+
+    const customerLookupData = await customerLookupRes.json();
+    const customerEdges = customerLookupData?.data?.customers?.edges || [];
+    const existingCustomer =
+      customerEdges.length > 0 ? customerEdges[0].node : null;
+
+    // ======================================================
     // 🛒 CREATE ORDER (No duplicate found)
     // ======================================================
 
@@ -159,14 +208,21 @@ export default async function handler(req, res) {
           requiresShipping: true,
         },
       ],
-      // customer: {
-      //   toUpsert: {
-      //     email: syntheticEmail,
-      //     firstName,
-      //     lastName,
-      //     phone,
-      //   },
-      // },
+      // If customer exists, associate by ID; else, create new with phone only
+      customer: existingCustomer
+        ? {
+            toAssociate: {
+              id: existingCustomer.id,
+            },
+          }
+        : {
+            toUpsert: {
+              firstName,
+              lastName,
+              phone: normalizedPhone,
+              email: syntheticEmail,
+            },
+          },
       shippingAddress: {
         firstName,
         lastName,
@@ -183,7 +239,6 @@ export default async function handler(req, res) {
         city,
         countryCode: "PK",
       },
-      // ✅ Add this block:
       shippingLines: [
         {
           title: "Free Shipping",
@@ -195,7 +250,6 @@ export default async function handler(req, res) {
               currencyCode: "PKR", // your shop currency code
             },
           },
-          // taxLines: []                // optional if you have shipping taxes
         },
       ],
       tags: ["Pending", "SPEED-COD"],
@@ -255,6 +309,7 @@ export default async function handler(req, res) {
       message: "Order placed successfully.",
     });
   } catch (err) {
+    console.error("Handler error:", err);
     return res.status(500).json({
       success: false,
       error: "INTERNAL_SERVER_ERROR",
