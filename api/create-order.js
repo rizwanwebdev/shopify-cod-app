@@ -227,10 +227,9 @@ export default async function handler(req, res) {
     );
 
     const data = await shopifyRes.json();
+    console.log(phone);
     console.log("Shopify response data:", JSON.stringify(data, null, 2));
-
     if (data.errors) {
-      console.log(phone);
       return res.status(400).json({
         success: false,
         error: "GRAPHQL_ERROR",
