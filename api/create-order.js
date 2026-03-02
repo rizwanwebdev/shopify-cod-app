@@ -182,7 +182,21 @@ export default async function handler(req, res) {
         city,
         countryCode: "PK",
       },
-
+      // ✅ Add this block:
+      shippingLines: [
+        {
+          title: "Free Shipping",
+          code: "Free Shipping", // optional reference string
+          source: "Custom", // any identifier for your app/channel
+          priceSet: {
+            shopMoney: {
+              amount: 0.0, // number, not string
+              currencyCode: "PKR", // your shop currency code
+            },
+          },
+          // taxLines: []                // optional if you have shipping taxes
+        },
+      ],
       tags: ["Pending", "SPEED-COD"],
       financialStatus: "PENDING",
     };
