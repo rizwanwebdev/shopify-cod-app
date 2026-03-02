@@ -159,14 +159,14 @@ export default async function handler(req, res) {
           requiresShipping: true,
         },
       ],
-      customer: {
-        toUpsert: {
-          email: syntheticEmail,
-          firstName,
-          lastName,
-          phone,
-        },
-      },
+      // customer: {
+      //   toUpsert: {
+      //     email: syntheticEmail,
+      //     firstName,
+      //     lastName,
+      //     phone,
+      //   },
+      // },
       shippingAddress: {
         firstName,
         lastName,
