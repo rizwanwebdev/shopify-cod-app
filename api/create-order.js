@@ -104,6 +104,7 @@ export default async function handler(req, res) {
     const lastName = "-";
     const variantGid = `gid://shopify/ProductVariant/${variantId}`;
     const normalizedPhone = String(phone).replace(/\D/g, "");
+    const syntheticEmail = `cod-${normalizedPhone}@test.com`;
 
     console.log("Normalized data", {
       firstName,
@@ -333,6 +334,7 @@ export default async function handler(req, res) {
               firstName,
               lastName,
               phone: normalizedPhone,
+              email: syntheticEmail,
             },
           },
       shippingAddress: {
