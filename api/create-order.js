@@ -1,5 +1,23 @@
+// Helper: normalize Pakistan phone numbers to Shopify's canonical format
+function normalizePkPhone(raw) {
+  const digits = String(raw).replace(/\D/g, "");
+
+  // Local mobile format 0309xxxxxxx (11 digits, starting with 0)
+  if (digits.length === 11 && digits.startsWith("0")) {
+    // Convert to 92 + rest: 92 309xxxxxxx
+    return `92${digits.slice(1)}`;
+  }
+
+  // Already in 92xxxxxxxxxxx format
+  if (digits.length === 12 && digits.startsWith("92")) {
+    return digits;
+  }
+
+  // Fallback: return digits as-is
+  return digits;
+}
+
 export default async function handler(req, res) {
-  // Entry log for every request
   console.log("=== /api/create-order HIT ===", {
     method: req.method,
     query: req.query,
@@ -7,9 +25,7 @@ export default async function handler(req, res) {
   });
 
   try {
-    // ─────────────────────────────────────────
-    // 1. Basic request validation
-    // ─────────────────────────────────────────
+    // 1. Basic validation
     if (req.method !== "POST") {
       console.warn("METHOD_NOT_ALLOWED", { method: req.method });
       return res.status(405).json({
@@ -63,9 +79,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ─────────────────────────────────────────
-    // 2. Parse and validate body
-    // ─────────────────────────────────────────
+    // 2. Parse body
     let body = req.body;
     if (typeof body === "string") {
       console.log("Parsing JSON body from string");
@@ -103,7 +117,9 @@ export default async function handler(req, res) {
     const firstName = name;
     const lastName = "-";
     const variantGid = `gid://shopify/ProductVariant/${variantId}`;
-    const normalizedPhone = String(phone).replace(/\D/g, "");
+
+    // ✅ Normalize phone to Shopify's canonical format (e.g. "0309..." -> "92309...")
+    const normalizedPhone = normalizePkPhone(phone);
     const syntheticEmail = `cod-${normalizedPhone}@test.com`;
 
     console.log("Normalized data", {
@@ -112,12 +128,11 @@ export default async function handler(req, res) {
       variantGid,
       phone,
       normalizedPhone,
+      syntheticEmail,
       quantity,
     });
 
-    // ─────────────────────────────────────────
-    // 3. CUSTOMER LOOKUP BY PHONE
-    // ─────────────────────────────────────────
+    // 3. CUSTOMER LOOKUP BY PHONE (using normalizedPhone)
     const findCustomerByPhoneQuery = `
       query FindCustomerByPhone($query: String!) {
         customers(first: 1, query: $query) {
@@ -180,11 +195,10 @@ export default async function handler(req, res) {
     console.log("Customer lookup result", {
       found: !!existingCustomer,
       customerId: existingCustomer?.id || null,
+      customerPhone: existingCustomer?.defaultPhoneNumber?.phoneNumber || null,
     });
 
-    // ─────────────────────────────────────────
-    // 4. DUPLICATE CHECK (10-minute window, by customer)
-    // ─────────────────────────────────────────
+    // 4. DUPLICATE CHECK (10-minute rule by customer + variant)
     if (existingCustomer) {
       const TEN_MINUTES = 10 * 60 * 1000;
       const tenMinutesAgoDate = new Date(Date.now() - TEN_MINUTES);
@@ -194,7 +208,6 @@ export default async function handler(req, res) {
         now: new Date().toISOString(),
       });
 
-      // Use customer_id:... in orders search
       const duplicateQuery = `
         query CheckDuplicateOrder($query: String!) {
           orders(first: 5, query: $query, sortKey: CREATED_AT, reverse: true) {
@@ -291,13 +304,11 @@ export default async function handler(req, res) {
       );
     } else {
       console.log(
-        "No existing customer found for phone; skipping duplicate check by customer.",
+        "No existing customer found for normalized phone; skipping duplicate check.",
       );
     }
 
-    // ─────────────────────────────────────────
-    // 5. ORDER CREATION (no duplicate found)
-    // ─────────────────────────────────────────
+    // 5. ORDER CREATION (attach existing customer or create new one)
     const mutation = `
       mutation orderCreate($order: OrderCreateOrderInput!) {
         orderCreate(order: $order) {
@@ -323,24 +334,24 @@ export default async function handler(req, res) {
       ],
       customer: existingCustomer
         ? {
-            // Existing customer: associate by ID
+            // Attach to existing customer by ID
             toAssociate: {
               id: existingCustomer.id,
             },
           }
         : {
-            // New customer: create with name + phone only
+            // Create a new customer (must include email for toUpsert)
             toUpsert: {
               firstName,
               lastName,
-              phone: normalizedPhone,
+              phone: normalizedPhone, // "92..." form
               email: syntheticEmail,
             },
           },
       shippingAddress: {
         firstName,
         lastName,
-        phone,
+        phone, // original local format is fine here
         address1: address,
         city,
         countryCode: "PK",
