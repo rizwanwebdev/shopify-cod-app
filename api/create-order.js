@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  // 1️⃣ Entry log – see every invocation
+  // Entry log for every request
   console.log("=== /api/create-order HIT ===", {
     method: req.method,
     query: req.query,
@@ -7,6 +7,9 @@ export default async function handler(req, res) {
   });
 
   try {
+    // ─────────────────────────────────────────
+    // 1. Basic request validation
+    // ─────────────────────────────────────────
     if (req.method !== "POST") {
       console.warn("METHOD_NOT_ALLOWED", { method: req.method });
       return res.status(405).json({
@@ -60,7 +63,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // Parse body
+    // ─────────────────────────────────────────
+    // 2. Parse and validate body
+    // ─────────────────────────────────────────
     let body = req.body;
     if (typeof body === "string") {
       console.log("Parsing JSON body from string");
@@ -98,8 +103,6 @@ export default async function handler(req, res) {
     const firstName = name;
     const lastName = "-";
     const variantGid = `gid://shopify/ProductVariant/${variantId}`;
-
-    // Normalize phone (you can switch to E.164 here if you want)
     const normalizedPhone = String(phone).replace(/\D/g, "");
 
     console.log("Normalized data", {
@@ -111,115 +114,9 @@ export default async function handler(req, res) {
       quantity,
     });
 
-    // ======================================================
-    // 🔎 DUPLICATE CHECK (10 minute window)
-    // ======================================================
-
-    const TEN_MINUTES = 10 * 60 * 1000;
-    const tenMinutesAgo = new Date(Date.now() - TEN_MINUTES).toISOString();
-
-    console.log("Duplicate check window", {
-      tenMinutesAgo,
-      now: new Date().toISOString(),
-    });
-
-    const duplicateQuery = `
-      query CheckDuplicateOrder($query: String!) {
-        orders(first: 5, query: $query, sortKey: CREATED_AT, reverse: true) {
-          edges {
-            node {
-              id
-              createdAt
-              lineItems(first: 10) {
-                edges {
-                  node {
-                    variant {
-                      id
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    const searchQuery = `
-        phone:"${normalizedPhone}"
-        created_at:>=${tenMinutesAgo}
-      `;
-
-    console.log("Duplicate orders GraphQL request", {
-      searchQuery,
-      endpoint: `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
-    });
-
-    const duplicateRes = await fetch(
-      `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
-      {
-        method: "POST",
-        headers: {
-          "X-Shopify-Access-Token": ENV_ACCESS_TOKEN,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: duplicateQuery,
-          variables: { query: searchQuery },
-        }),
-      },
-    );
-
-    console.log("Duplicate response status", duplicateRes.status);
-
-    const duplicateData = await duplicateRes.json();
-    console.log(
-      "Duplicate data from Shopify:",
-      JSON.stringify(duplicateData, null, 2),
-    );
-
-    if (duplicateData.errors) {
-      console.error("Duplicate query GraphQL errors", duplicateData.errors);
-    }
-
-    const existingOrders = duplicateData?.data?.orders?.edges || [];
-    console.log(
-      "Duplicate check - existingOrders length",
-      existingOrders.length,
-    );
-
-    for (const edge of existingOrders) {
-      const order = edge.node;
-
-      const hasSameVariant = order.lineItems.edges.some(
-        (item) => item.node.variant?.id === variantGid,
-      );
-
-      console.log("Checking existing order for duplicate", {
-        orderId: order.id,
-        createdAt: order.createdAt,
-        hasSameVariant,
-      });
-
-      if (hasSameVariant) {
-        console.log("Duplicate order detected. Returning early.", {
-          orderId: order.id,
-        });
-        return res.status(200).json({
-          success: true,
-          duplicate: true,
-          message: "Order already placed recently.",
-          orderId: order.id,
-        });
-      }
-    }
-
-    console.log("No duplicate order found for phone + variant");
-
-    // ======================================================
-    // 🧍‍♂️ CUSTOMER LOOKUP BY PHONE
-    // ======================================================
-
+    // ─────────────────────────────────────────
+    // 3. CUSTOMER LOOKUP BY PHONE
+    // ─────────────────────────────────────────
     const findCustomerByPhoneQuery = `
       query FindCustomerByPhone($query: String!) {
         customers(first: 1, query: $query) {
@@ -242,6 +139,7 @@ export default async function handler(req, res) {
 
     console.log("Customer lookup GraphQL request", {
       customerSearchQuery,
+      endpoint: `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
     });
 
     const customerLookupRes = await fetch(
@@ -283,10 +181,122 @@ export default async function handler(req, res) {
       customerId: existingCustomer?.id || null,
     });
 
-    // ======================================================
-    // 🛒 CREATE ORDER (No duplicate found)
-    // ======================================================
+    // ─────────────────────────────────────────
+    // 4. DUPLICATE CHECK (10-minute window, by customer)
+    // ─────────────────────────────────────────
+    if (existingCustomer) {
+      const TEN_MINUTES = 10 * 60 * 1000;
+      const tenMinutesAgoDate = new Date(Date.now() - TEN_MINUTES);
 
+      console.log("Duplicate check window", {
+        tenMinutesAgo: tenMinutesAgoDate.toISOString(),
+        now: new Date().toISOString(),
+      });
+
+      // Use customer_id:... in orders search
+      const duplicateQuery = `
+        query CheckDuplicateOrder($query: String!) {
+          orders(first: 5, query: $query, sortKey: CREATED_AT, reverse: true) {
+            edges {
+              node {
+                id
+                createdAt
+                lineItems(first: 10) {
+                  edges {
+                    node {
+                      variant {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const orderSearchQuery = `customer_id:${existingCustomer.id}`;
+
+      console.log("Duplicate orders GraphQL request", {
+        orderSearchQuery,
+        endpoint: `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
+      });
+
+      const duplicateRes = await fetch(
+        `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
+        {
+          method: "POST",
+          headers: {
+            "X-Shopify-Access-Token": ENV_ACCESS_TOKEN,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: duplicateQuery,
+            variables: { query: orderSearchQuery },
+          }),
+        },
+      );
+
+      console.log("Duplicate response status", duplicateRes.status);
+
+      const duplicateData = await duplicateRes.json();
+      console.log(
+        "Duplicate data from Shopify (by customer):",
+        JSON.stringify(duplicateData, null, 2),
+      );
+
+      if (duplicateData.errors) {
+        console.error("Duplicate query GraphQL errors", duplicateData.errors);
+      }
+
+      const existingOrders = duplicateData?.data?.orders?.edges || [];
+      console.log(
+        "Duplicate check - existingOrders length (by customer)",
+        existingOrders.length,
+      );
+
+      for (const edge of existingOrders) {
+        const order = edge.node;
+        const createdAtDate = new Date(order.createdAt);
+
+        const hasSameVariant = order.lineItems.edges.some(
+          (item) => item.node.variant?.id === variantGid,
+        );
+        const isWithin10Min = createdAtDate >= tenMinutesAgoDate;
+
+        console.log("Checking existing order for duplicate", {
+          orderId: order.id,
+          createdAt: order.createdAt,
+          hasSameVariant,
+          isWithin10Min,
+        });
+
+        if (hasSameVariant && isWithin10Min) {
+          console.log("Duplicate order detected. Returning early.", {
+            orderId: order.id,
+          });
+          return res.status(200).json({
+            success: true,
+            duplicate: true,
+            message: "Order already placed recently.",
+            orderId: order.id,
+          });
+        }
+      }
+
+      console.log(
+        "No duplicate order found for this customer + variant within 10 minutes",
+      );
+    } else {
+      console.log(
+        "No existing customer found for phone; skipping duplicate check by customer.",
+      );
+    }
+
+    // ─────────────────────────────────────────
+    // 5. ORDER CREATION (no duplicate found)
+    // ─────────────────────────────────────────
     const mutation = `
       mutation orderCreate($order: OrderCreateOrderInput!) {
         orderCreate(order: $order) {
@@ -312,11 +322,13 @@ export default async function handler(req, res) {
       ],
       customer: existingCustomer
         ? {
+            // Existing customer: associate by ID
             toAssociate: {
               id: existingCustomer.id,
             },
           }
         : {
+            // New customer: create with name + phone only
             toUpsert: {
               firstName,
               lastName,
