@@ -94,10 +94,10 @@ export default async function handler(req, res) {
     `;
 
     // You can keep using syntheticEmail purely for duplicate detection
-    const syntheticEmail = `cod-${normalizedPhone}@test.com`;
+    // const syntheticEmail = `cod-${normalizedPhone}@test.com`;
 
     const searchQuery = `
-        email:"${syntheticEmail}" 
+        phone:"${normalizedPhone}"
         created_at:>=${tenMinutesAgo}
       `;
 
@@ -220,7 +220,7 @@ export default async function handler(req, res) {
               firstName,
               lastName,
               phone: normalizedPhone,
-              email: syntheticEmail,
+              // email: syntheticEmail,
             },
           },
       shippingAddress: {
@@ -281,7 +281,7 @@ export default async function handler(req, res) {
     );
 
     const data = await shopifyRes.json();
-    console.log(phone);
+    console.log(firstName, " : ", phone);
     console.log("Shopify response data:", JSON.stringify(data, null, 2));
     if (data.errors) {
       return res.status(400).json({
