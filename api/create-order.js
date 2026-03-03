@@ -1,6 +1,14 @@
 export default async function handler(req, res) {
+  // 1️⃣ Entry log – see every invocation
+  console.log("=== /api/create-order HIT ===", {
+    method: req.method,
+    query: req.query,
+    time: new Date().toISOString(),
+  });
+
   try {
     if (req.method !== "POST") {
+      console.warn("METHOD_NOT_ALLOWED", { method: req.method });
       return res.status(405).json({
         success: false,
         error: "METHOD_NOT_ALLOWED",
@@ -10,9 +18,23 @@ export default async function handler(req, res) {
     const ENV_SHOP_NAME = process.env.SHOP_NAME;
     const ENV_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
+    console.log("Env check", {
+      ENV_SHOP_NAME: !!ENV_SHOP_NAME,
+      HAS_ACCESS_TOKEN: !!ENV_ACCESS_TOKEN,
+    });
+
     const { shop, signature } = req.query;
 
+    console.log("Incoming request params", {
+      shop,
+      signaturePresent: !!signature,
+    });
+
     if (!shop || !signature || !shop.endsWith(".myshopify.com")) {
+      console.warn("INVALID_PROXY_REQUEST", {
+        shop,
+        signaturePresent: !!signature,
+      });
       return res.status(403).json({
         success: false,
         error: "INVALID_PROXY_REQUEST",
@@ -20,6 +42,7 @@ export default async function handler(req, res) {
     }
 
     if (shop !== ENV_SHOP_NAME) {
+      console.warn("SHOP_MISMATCH", { shop, ENV_SHOP_NAME });
       return res.status(403).json({
         success: false,
         error: "SHOP_MISMATCH",
@@ -27,6 +50,10 @@ export default async function handler(req, res) {
     }
 
     if (!ENV_SHOP_NAME || !ENV_ACCESS_TOKEN) {
+      console.error("SERVER_MISCONFIGURED", {
+        ENV_SHOP_NAME,
+        HAS_ACCESS_TOKEN: !!ENV_ACCESS_TOKEN,
+      });
       return res.status(500).json({
         success: false,
         error: "SERVER_MISCONFIGURED",
@@ -36,8 +63,11 @@ export default async function handler(req, res) {
     // Parse body
     let body = req.body;
     if (typeof body === "string") {
+      console.log("Parsing JSON body from string");
       body = JSON.parse(body);
     }
+
+    console.log("Request body raw", body);
 
     const {
       name,
@@ -51,6 +81,14 @@ export default async function handler(req, res) {
     } = body || {};
 
     if (!name || !phone || !address || !city || !variantId || !quantity) {
+      console.warn("MISSING_FIELDS", {
+        hasName: !!name,
+        hasPhone: !!phone,
+        hasAddress: !!address,
+        hasCity: !!city,
+        hasVariantId: !!variantId,
+        hasQuantity: !!quantity,
+      });
       return res.status(400).json({
         success: false,
         error: "MISSING_FIELDS",
@@ -64,12 +102,26 @@ export default async function handler(req, res) {
     // Normalize phone (you can switch to E.164 here if you want)
     const normalizedPhone = String(phone).replace(/\D/g, "");
 
+    console.log("Normalized data", {
+      firstName,
+      lastName,
+      variantGid,
+      phone,
+      normalizedPhone,
+      quantity,
+    });
+
     // ======================================================
     // 🔎 DUPLICATE CHECK (10 minute window)
     // ======================================================
 
     const TEN_MINUTES = 10 * 60 * 1000;
     const tenMinutesAgo = new Date(Date.now() - TEN_MINUTES).toISOString();
+
+    console.log("Duplicate check window", {
+      tenMinutesAgo,
+      now: new Date().toISOString(),
+    });
 
     const duplicateQuery = `
       query CheckDuplicateOrder($query: String!) {
@@ -93,13 +145,15 @@ export default async function handler(req, res) {
       }
     `;
 
-    // You can keep using syntheticEmail purely for duplicate detection
-    // const syntheticEmail = `cod-${normalizedPhone}@test.com`;
-
     const searchQuery = `
         phone:"${normalizedPhone}"
         created_at:>=${tenMinutesAgo}
       `;
+
+    console.log("Duplicate orders GraphQL request", {
+      searchQuery,
+      endpoint: `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
+    });
 
     const duplicateRes = await fetch(
       `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
@@ -116,8 +170,23 @@ export default async function handler(req, res) {
       },
     );
 
+    console.log("Duplicate response status", duplicateRes.status);
+
     const duplicateData = await duplicateRes.json();
+    console.log(
+      "Duplicate data from Shopify:",
+      JSON.stringify(duplicateData, null, 2),
+    );
+
+    if (duplicateData.errors) {
+      console.error("Duplicate query GraphQL errors", duplicateData.errors);
+    }
+
     const existingOrders = duplicateData?.data?.orders?.edges || [];
+    console.log(
+      "Duplicate check - existingOrders length",
+      existingOrders.length,
+    );
 
     for (const edge of existingOrders) {
       const order = edge.node;
@@ -126,7 +195,16 @@ export default async function handler(req, res) {
         (item) => item.node.variant?.id === variantGid,
       );
 
+      console.log("Checking existing order for duplicate", {
+        orderId: order.id,
+        createdAt: order.createdAt,
+        hasSameVariant,
+      });
+
       if (hasSameVariant) {
+        console.log("Duplicate order detected. Returning early.", {
+          orderId: order.id,
+        });
         return res.status(200).json({
           success: true,
           duplicate: true,
@@ -135,6 +213,8 @@ export default async function handler(req, res) {
         });
       }
     }
+
+    console.log("No duplicate order found for phone + variant");
 
     // ======================================================
     // 🧍‍♂️ CUSTOMER LOOKUP BY PHONE
@@ -158,8 +238,11 @@ export default async function handler(req, res) {
       }
     `;
 
-    // Shopify Admin search syntax: phone:"..."
     const customerSearchQuery = `phone:"${normalizedPhone}"`;
+
+    console.log("Customer lookup GraphQL request", {
+      customerSearchQuery,
+    });
 
     const customerLookupRes = await fetch(
       `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
@@ -176,10 +259,29 @@ export default async function handler(req, res) {
       },
     );
 
+    console.log("Customer lookup response status", customerLookupRes.status);
+
     const customerLookupData = await customerLookupRes.json();
+    console.log(
+      "Customer lookup data:",
+      JSON.stringify(customerLookupData, null, 2),
+    );
+
+    if (customerLookupData.errors) {
+      console.error(
+        "Customer lookup GraphQL errors",
+        customerLookupData.errors,
+      );
+    }
+
     const customerEdges = customerLookupData?.data?.customers?.edges || [];
     const existingCustomer =
       customerEdges.length > 0 ? customerEdges[0].node : null;
+
+    console.log("Customer lookup result", {
+      found: !!existingCustomer,
+      customerId: existingCustomer?.id || null,
+    });
 
     // ======================================================
     // 🛒 CREATE ORDER (No duplicate found)
@@ -208,7 +310,6 @@ export default async function handler(req, res) {
           requiresShipping: true,
         },
       ],
-      // If customer exists, associate by ID; else, create new with phone only
       customer: existingCustomer
         ? {
             toAssociate: {
@@ -220,7 +321,6 @@ export default async function handler(req, res) {
               firstName,
               lastName,
               phone: normalizedPhone,
-              // email: syntheticEmail,
             },
           },
       shippingAddress: {
@@ -242,12 +342,12 @@ export default async function handler(req, res) {
       shippingLines: [
         {
           title: "Free Shipping",
-          code: "Free Shipping", // optional reference string
-          source: "Custom", // any identifier for your app/channel
+          code: "Free Shipping",
+          source: "Custom",
           priceSet: {
             shopMoney: {
-              amount: 0.0, // number, not string
-              currencyCode: "PKR", // your shop currency code
+              amount: 0.0,
+              currencyCode: "PKR",
             },
           },
         },
@@ -257,6 +357,11 @@ export default async function handler(req, res) {
     };
 
     if (Number(quantity) === 2 && dis_percent && discount_code) {
+      console.log("Applying discount code", {
+        quantity,
+        dis_percent,
+        discount_code,
+      });
       orderInput.discountCode = {
         itemPercentageDiscountCode: {
           percentage: Number(dis_percent),
@@ -264,6 +369,11 @@ export default async function handler(req, res) {
         },
       };
     }
+
+    console.log(
+      "Final orderInput to Shopify:",
+      JSON.stringify(orderInput, null, 2),
+    );
 
     const shopifyRes = await fetch(
       `https://${ENV_SHOP_NAME}/admin/api/2026-01/graphql.json`,
@@ -280,10 +390,16 @@ export default async function handler(req, res) {
       },
     );
 
+    console.log("orderCreate response status", shopifyRes.status);
+
     const data = await shopifyRes.json();
-    console.log(firstName, " : ", phone);
-    console.log("Shopify response data:", JSON.stringify(data, null, 2));
+    console.log(
+      "Shopify orderCreate response data:",
+      JSON.stringify(data, null, 2),
+    );
+
     if (data.errors) {
+      console.error("Top-level GraphQL errors", data.errors);
       return res.status(400).json({
         success: false,
         error: "GRAPHQL_ERROR",
@@ -294,12 +410,20 @@ export default async function handler(req, res) {
     const result = data.data?.orderCreate;
 
     if (!result || result.userErrors?.length) {
+      console.warn("ORDER_CREATE_FAILED", {
+        userErrors: result?.userErrors,
+      });
       return res.status(400).json({
         success: false,
         error: "ORDER_CREATE_FAILED",
         details: result?.userErrors,
       });
     }
+
+    console.log("Order created successfully", {
+      orderId: result.order.id,
+      displayFinancialStatus: result.order.displayFinancialStatus,
+    });
 
     return res.status(200).json({
       success: true,
@@ -309,7 +433,7 @@ export default async function handler(req, res) {
       message: "Order placed successfully.",
     });
   } catch (err) {
-    console.error("Handler error:", err);
+    console.error("Handler error (catch)", err);
     return res.status(500).json({
       success: false,
       error: "INTERNAL_SERVER_ERROR",
