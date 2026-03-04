@@ -230,7 +230,12 @@ export default async function handler(req, res) {
         }
       `;
 
-      const orderSearchQuery = `customer_id:${existingCustomer.id}`;
+      // existingCustomer.id = "gid://shopify/Customer/56501169"
+      const customerGid = existingCustomer.id;
+      const customerNumericId = customerGid.split("/").pop(); // "56501169"
+
+      // Now build the search query using numeric ID
+      const orderSearchQuery = `customer_id:${customerNumericId}`;
 
       console.log("Duplicate orders GraphQL request", {
         orderSearchQuery,
@@ -293,7 +298,7 @@ export default async function handler(req, res) {
           return res.status(200).json({
             success: true,
             duplicate: true,
-            message: "Order already placed recently.",
+            message: "Order already placed within 10 minutes.",
             orderId: order.id,
           });
         }
