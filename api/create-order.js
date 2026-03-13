@@ -399,6 +399,17 @@ export default async function handler(req, res) {
         },
       };
     }
+    if (Number(quantity) === 3) {
+      console.log("Applying discount code", {
+        quantity,
+      });
+      orderInput.discountCode = {
+        itemPercentageDiscountCode: {
+          percentage: 33,
+          code: "COD3",
+        },
+      };
+    }
 
     console.log(
       "Final orderInput to Shopify:",
